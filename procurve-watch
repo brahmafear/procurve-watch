@@ -3,6 +3,7 @@
 
 ROOTPATH=$(dirname $0)
 SETTINGS=$ROOTPATH/etc/procurve-watch.conf
+PWDFILE=$ROOTPATH/etc/procurve-watch.pass
 
 SWITCHPATH=$ROOTPATH/switches
 CONFIGSPATH=$ROOTPATH/configs
@@ -17,6 +18,11 @@ else
     exit 1
 fi
 
+if [ "$SSHTYPE" == "File" -a ! -r "$PWDFILE" ]
+then
+    echo "File $PWDFILE missing."
+    exit 1
+fi
 for x in $SWITCHPATH $CONFIGSPATH
 do
     if [ ! -e $x ]
@@ -34,7 +40,7 @@ email-diff () {
     REPORTEDCHANGES=$LOG/$SWITCH-reported-changes.log
     cat $LOG | mail -s "PROCURVE WATCH: $SWITCH configuration was modified." $RECIPIENTS
     echo "Changes for $DATETIME -----------" >> $REPORTEDCHANGES
-    cat $LOG >> $REPORTEDCHANGES 
+    cat $LOG >> $REPORTEDCHANGES
 }
 
 diff-switch-config () {
@@ -51,13 +57,16 @@ diff-switch-config () {
     if [ -e $OLDCONFIG ]
     then
 
-        diff -c10 $OLDCONFIG $NEWCONFIG > $LOG
+        diff -C 10 $OLDCONFIG $NEWCONFIG > $LOG
         DIFFER=$?
 
-        if [ $DIFFER == 1 ] 
+        if [ $DIFFER == 1 ]
         then
             cp $LOG $LOG-$DATETIME.changed
-            email-diff $SWITCH $LOGDIR
+            if [ ! "$RECIPIENTS" == "" ]
+            then
+                email-diff $SWITCH $LOGDIR
+            fi
             rm $OLDCONFIG
             ln -s $NEWCONFIG_FILENAME $OLDCONFIG
         else
@@ -83,19 +92,22 @@ fetch-config () {
     fi
 
 
-    if [ $USESSHKEYS == "No" ]
+    if [ $SSHTYPE == "Variable" ]
     then
-        sshpass -p"$PASSWORD" scp $USERNAME@$SWITCH:cfg/running-config $LOGDIR/$SWITCH-$DATETIME.cfg >> $ERRORLOG 2>&1
-    elif [ $USESSHKEYS == "Yes" ]
+        sshpass -p"$PASSWORD" scp $SCPOPTIONS $USERNAME@$SWITCH:cfg/running-config $LOGDIR/$SWITCH-$DATETIME.cfg >> $ERRORLOG 2>&1
+    elif [ $SSHTYPE == "File" ]
     then
-        scp $USERNAME@$SWITCH:cfg/running-config $LOGDIR/$SWITCH-$DATETIME.cfg >> $ERRORLOG 2>&1
+        sshpass -f"$PWDFILE" scp $SCPOPTIONS $USERNAME@$SWITCH:cfg/running-config $LOGDIR/$SWITCH-$DATETIME.cfg >> $ERRORLOG 2>&1
+    elif [ $SSHTYPE == "Key" ]
+    then
+        scp $SCPOPTIONS $USERNAME@$SWITCH:cfg/running-config $LOGDIR/$SWITCH-$DATETIME.cfg >> $ERRORLOG 2>&1
     fi
     diff-switch-config $SWITCH $SWITCHCONFIG_OUTPUTDIR >> $ERRORLOG 2>&1
 }
 
 
 process_list_of_switches () {
-    
+
     FILE_LISTOFSWITCHES=$1
     GROUPCONFIG_OUTPUTDIR=$CONFIGSPATH/${FILE_LISTOFSWITCHES#$SWITCHPATH}
     mkdir -p $GROUPCONFIG_OUTPUTDIR
@@ -138,11 +150,3 @@ do
 done
 
 echo "Finished."
-
-
-
-
-
-
-
-
